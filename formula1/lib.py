@@ -1,7 +1,9 @@
-from sample_bot import *
+from sample_bot_car_TI6 import *
+from count_angle import get_car_road_angle
 import shutil
 import argparse
 from datetime import datetime
+#import pyautogui
 
 import socketio
 import eventlet
@@ -18,7 +20,6 @@ from random import random, choice
 
 from time import sleep
 from random import randint, random, sample
-import pyautogui
 from IPython import display
 import heapq
 
@@ -46,16 +47,6 @@ ACTIONS = [(angle, throttle) for angle in ANGLES for throttle in THROTTLES] #33 
 
 
 # In[4]:
-
-
-def send_control(steering_angle, throttle):
-    sio.emit(
-        "steer",
-        data={
-            'steering_angle': str(steering_angle),
-            'throttle': str(throttle)
-        },  
-        skip_sid=True)
     
 def calculate_avg(series):
     return [np.mean(serie) for serie in series]
@@ -223,103 +214,6 @@ class ACNetwork:
         self.saver.save(self.sess, '%s/%s'%(self.model_folder, model_name))
         self.saver.restore(self.target_sess, tf.train.latest_checkpoint(self.model_folder))
 
-
-# In[8]:
-
-
-# V(state) = state_value
-class ValueNetwork:
-    def __init__(self):
-        self.output_size = 1
-        self.model_folder = './model/value_network'
-        
-        self.rewards = tf.placeholder(shape=(None), dtype=tf.float32)
-        inputs, output = build_network()
-        self.common = output
-        
-        with tf.variable_scope('value-network'):
-            self.inputs = inputs
-            self.state_value = tf.layers.dense(output, units=self.output_size)
-
-            self.loss = tf.reduce_sum(tf.square(self.state_value - self.rewards))
-            self.train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(self.loss)
-
-        self.sess = tf.Session()
-        self.target_sess = tf.Session()
-        
-        self.sess.run(tf.global_variables_initializer())
-        self.target_sess.run(tf.global_variables_initializer())
-
-        self.saver = tf.train.Saver()
-        
-        self.metrics = {}
-        self.metrics['loss'] = []
-        
-    def reload(self, model_name):
-        self.saver.save(self.sess, '%s/%s'%(self.model_folder, model_name))
-        self.saver.restore(self.target_sess, tf.train.latest_checkpoint(self.model_folder))
-
-
-# In[9]:
-
-
-# P(state) = action probability
-class PolicyNetwork:
-    def __init__(self):
-        self.action_size = len(ACTIONS)
-        self.model_folder = './model/policy_network'
-        
-        self.advantage = tf.placeholder(shape=(None, self.action_size), dtype=tf.float32)
-        
-        inputs, output = build_network()
-        self.inputs = inputs
-        self.common = output
-    
-        self.metrics = {}
-        self.metrics['loss'] = []
-        
-        with tf.variable_scope('policy-network'):
-            self.actions_values = tf.layers.dense(output, units=self.action_size, activation=tf.nn.softmax) # batch_size, action_size
-            self.best_action = tf.argmax(self.actions_values, axis=1)
-
-            self.loss = tf.reduce_sum(tf.log(self.actions_values) * self.advantage)*-1
-            self.train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(self.loss)
-
-        self.sess = tf.Session()
-        self.target_sess = tf.Session()
-        
-        self.sess.run(tf.global_variables_initializer())
-        self.target_sess.run(tf.global_variables_initializer())
-
-        self.saver = tf.train.Saver()
-    
-    def get_action(self, state):
-        best_action = self.target_sess.run(self.best_action, feed_dict={self.inputs: [state]})[0]
-        return best_action
-    
-    def update(self, batch):
-        states = [transaction['state'] for transaction in batch]
-        advantages = []
-        for transaction in batch:
-            # unselected actions get 0 advantage, selected action get reward - current_state_value advantage
-            advantage = [0]*self.action_size
-            advantage[transaction['action']] = transaction['advantage']
-
-            advantages.append(advantage)
-            
-        advantages = np.array(advantages)
-        
-        _, loss = self.sess.run([self.train_op, self.loss], feed_dict={self.inputs: states, self.advantage: advantages})
-        self.metrics['loss'].append(loss)
-
-    def reload(self, model_name):
-        self.saver.save(self.sess, '%s/%s'%(self.model_folder, model_name))
-        self.saver.restore(self.target_sess, tf.train.latest_checkpoint(self.model_folder))
-
-
-# In[10]:
-
-
 # when one round is done, calculate advantages for stored transactions
 def add_advantage(transactions, ac_network):
     states = [transaction['state'] for transaction in transactions]
@@ -389,13 +283,15 @@ class ACNDrive(AutoDrive):
         self.speeds_batch = self.speeds_batch[1:]
         self.speeds_batch.append(speed)
 
-    def is_crash(self):
-        return np.mean(self.speeds_batch) <= 0.01
+    def is_crash(self, src_img):
+        return ImageProcessor.is_crash(src_img)
     
     def calculate_reward(self, steering_angle, speed):
         return speed * math.cos(steering_angle)
     
     def update_memory(self):
+        if len(self.transactions) == 0:
+            return
         add_advantage(self.transactions, self.ac_network)
         for transaction in self.transactions:
             self.memory.insert(transaction)
@@ -408,27 +304,32 @@ class ACNDrive(AutoDrive):
         self.take_random_action_prob *= self.mu
         
         print('crashed, restarting...')
+        '''
         pyautogui.press('esc')
         # my mouse ...
         for _ in range(10):
             pyautogui.click()
+        '''
 
     def on_dashboard(self, src_img, last_steering_angle, speed, throttle, info):
         '''
         if info['elapsed'] == self.last_elapsed:
             return
         '''
+        track_img = ImageProcessor.preprocess(src_img)
+
         # get angle to calculate reward
         self.update_speeds(speed)
-        if self.is_crash():
+        if self.is_crash(track_img):
             self.end_and_restart_new_game()
+            return
 
         try:
-            track_img     = ImageProcessor.preprocess(src_img)
+            target_angle = get_car_road_angle(track_img)
             #current_angle = ImageProcessor.find_steering_angle_by_color(track_img, last_steering_angle, debug = self.debug)
-            current_angle = ImageProcessor.find_steering_angle_by_line(track_img, last_steering_angle, debug = self.debug)
-            steering_angle = self._steering_pid.update(-current_angle)
-            throttle       = self._throttle_pid.update(speed)
+            #current_angle = ImageProcessor.find_steering_angle_by_line(track_img, last_steering_angle, debug = self.debug)
+            #steering_angle = self._steering_pid.update(-current_angle)
+            #throttle       = self._throttle_pid.update(speed)
             
         except:
             print(traceback.format_exc())
@@ -462,7 +363,8 @@ class ACNDrive(AutoDrive):
         steering_angle, throttle = action.steering_angle, action.throttle
         
         self.last_action = action.action_idx
-        self.last_reward = self.calculate_reward(steering_angle, speed)
+        #self.last_reward = self.calculate_reward(steering_angle, speed)
+        self.last_reward = self.calculate_reward(target_angle, speed)
         self.last_state = state
         self.last_elapsed = info['elapsed']
         
@@ -503,9 +405,22 @@ def setup():
 
     sio = socketio.Server()
     record_folder = './records/'
+
+    def send_control(steering_angle, throttle):
+        sio.emit(
+            "steer",
+            data={
+                'steering_angle': str(steering_angle),
+                'throttle': str(throttle)
+            },
+            skip_sid=True)
+
+
     car = Car(control_function = send_control)
     #drive = AutoDrive(car, record_folder=record_folder)
-    drive = ACNDrive(car, record_folder=record_folder)
+
+    car_training_data_collector = TrainingDataCollector('./logs/tracks.log')
+    drive = ACNDrive(car, car_training_data_collector, record_folder=record_folder)
 
     @sio.on('telemetry')
     def telemetry(sid, dashboard):
@@ -523,6 +438,7 @@ def setup():
 
 def run(sio, car, drive):
     app = socketio.Middleware(sio, Flask(__name__))
+    print('starting ...')
     eventlet.wsgi.server(eventlet.listen(('', 4567)), app, log_output=False)
 
 
