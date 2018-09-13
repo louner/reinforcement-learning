@@ -31,6 +31,7 @@ max_size = batch_size*10
 t_max = 100
 reload_window = batch_size
 reward_decay = 0.99
+gamma = 0.99
 last_state = None
 last_action = None
 last_reward = None
@@ -216,15 +217,20 @@ class ACNetwork:
 
 # when one round is done, calculate advantages for stored transactions
 def add_advantage(transactions, ac_network):
+    transactions = [transaction for transaction in reversed(transactions)]
+
     states = [transaction['state'] for transaction in transactions]
+    next_states = [transaction['next_state'] for transaction in transactions]
+
     state_values = ac_network.get_state_values(states)
+    next_state_values = ac_network.get_state_values(next_states)
+
     
     reward = crashing_reward
-    for t, state_value in zip(reversed(transactions), reversed(state_values)):
+    for t, state_value, next_state_value in zip(transactions, state_values, next_state_values):
         reward += t['reward']
         reward *= reward_decay
-        t['advantage'] = reward - state_value
-
+        t['advantage'] = reward + gamma*next_state_value - state_value
 
 # In[34]:
 
