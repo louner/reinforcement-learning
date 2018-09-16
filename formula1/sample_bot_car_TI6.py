@@ -726,7 +726,7 @@ class ImageProcessor(object):
                     black_count += 1
                 if sr[inverse_i][inverse_j] == 0 and sg[inverse_i][inverse_j] == 0 and sb[inverse_i][inverse_j] == 0:
                     yellow_count += 1
-        print("black_count:{}, yellow_count:{}".format(black_count,yellow_count))
+        #print("black_count:{}, yellow_count:{}".format(black_count,yellow_count))
         is_left_wall=False
         is_right_wall=False
         if black_count>=320:
@@ -836,7 +836,7 @@ class ImageProcessor(object):
         #Check the left wall or right wall
         is_left_wall,is_right_wall=ImageProcessor.wall_detection(sr, sg, sb)
 
-        print("Left wall:{}, Right Wall:{}".format(is_left_wall, is_right_wall))
+        #print("Left wall:{}, Right Wall:{}".format(is_left_wall, is_right_wall))
         #Keep the car in the center color region
         turn_index=ImageProcessor.turn_to_second_large_color_region(is_left_wall,is_right_wall,tracks)
         if turn_index>-1:
@@ -861,7 +861,7 @@ class ImageProcessor(object):
             r = 60
             x = int(image_width / 2 + int(r * math.cos(steering_angle)))
             y = int(image_height - int(r * math.sin(steering_angle)))
-            cv2.line(img, (int(image_width / 2), image_height), (x, y), (255, 0, 255), 2)
+            #cv2.line(img, (int(image_width / 2), image_height), (x, y), (255, 0, 255), 2)
             logit("steering angle: %0.2f, last steering angle: %0.2f" % (ImageProcessor.rad2deg(steering_angle), ImageProcessor.rad2deg(np.pi/2-last_steering_angle)))
 
         return (np.pi/2 - steering_angle) * 2.0
