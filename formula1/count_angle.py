@@ -2,71 +2,44 @@ from sample_bot_car_TI6 import ImageProcessor, cv2
 import numpy as np
 import math
 
-def blur(x):
-    return int(x/10)*10
-
-blur = np.vectorize(blur)
-
-def black(x):
-    return 255 if x == 70 else x
-
-def most_common(ary):
-    count = np.bincount(ary.flatten())
-    return np.argmax(count)
-
-
-def find_target(ary, target_color):
-    print(ary.shape)
-    print(target_color)
-    st, ed = -1, -1
-    medians = []
-    for i,val in enumerate(ary):
-        if st < 0:
-            if val == target_color:
-                st = i
-        else:
-            if val == target_color:
-                ed = i
-            else:
-                if ed - st > 2:
-                    medians.append(int((st+ed)/2))
-                st, ed = -1, -1
-
-    return medians
-
-def draw_direction(filename):
-    img = cv2.imread(filename, cv2.IMREAD_GRAYSCALE)
-    print(get_car_road_angle(img))
-    if img is None:
-        return
-    blur_img = blur(img)
-    target_color = most_common(blur_img)
-    top_line = blur_img[0, :].flatten()
-    medians = find_target(top_line, target_color)
-
-    half_x = int(blur_img.shape[1]/2)
-    target_x = min(medians, key=lambda x: abs(x-half_x))
-
-    cv2.line(img, (target_x, 0), (half_x, blur_img.shape[0]), 255, 5)
-
-    cv2.imwrite('%s_.jpg'%(filename), img)
-    print('%s_.jpg'%(filename))
-
 def rgb2gray(rgb):
     return np.dot(rgb[...,:3], [0.299, 0.587, 0.114])
 
-def get_car_road_angle(track_img):
-    track_img = rgb2gray(track_img)
-    blur_img = blur(track_img)
-    target_color = most_common(blur_img)
-    medians = find_target(blur_img[0, :], target_color)
+white_pixel = (255, 255, 255)
 
-    half_x = int(blur_img.shape[1] / 2)
-    target_x = min(medians, key=lambda x: abs(x-half_x))
-    y, x = abs(half_x-target_x), blur_img.shape[0]
-    return math.atan2(y, x)
+def locate_white_pixels(ary_2d):
+    return np.where(np.sum(ary_2d, axis=1) == sum(white_pixel))[0]
 
-#print(draw_direction('images/track_img-20180911-144456-955393current_angle_1.196496.jpg'))
+def get_target(img):
+    img = img.copy()
+    mask = np.zeros([img.shape[0] + 2, img.shape[1] + 2], np.uint8)
+    cv2.floodFill(img, mask, (int(img.shape[1] / 2 + 10), img.shape[0] - 1), white_pixel)
+
+    top_target = locate_white_pixels(img[0])
+    if top_target.any():
+        x, y = int(np.mean(top_target)), 0
+
+    else:
+        left_target, right_target = locate_white_pixels(img[:, 0]), locate_white_pixels(img[:, -1])
+        if min(left_target) < min(right_target):
+            x, y = 0, int(np.mean(left_target))
+        else:
+            x, y = img.shape[1] - 1, int(np.mean(right_target))
+
+    return x, y
+
+def put_meta(img, msg):
+    target_x, target_y = get_target(img)
+    half_x = int(img.shape[1]/2)
+
+    cv2.line(img, (target_x, target_y), (half_x, img.shape[0]), white_pixel, 5)
+    cv2.putText(img, msg, (50, 50), cv2.FONT_HERSHEY_COMPLEX, 0.5, (255, 255, 255), 1)
+    return img
+
+def get_car_road_angle(img):
+    target_x, target_y = get_target(img)
+    source_x, source_y = int(img.shape[1]/2), img.shape[0]
+    return math.atan2(abs(target_x-source_x), abs(target_y-source_y))
 
 if __name__ == '__main__':
     import sys
